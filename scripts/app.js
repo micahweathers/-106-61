@@ -2,24 +2,6 @@
 let tasks = [];
 let currentEditIndex = -1;
 
-// Remove color display function - keeping it basic
-// function updateColorDisplay() - REMOVED
-// getColorName() function - REMOVED
-
-// Task constructor
-class Task {
-    constructor(title, description, color, startDate, status, budget) {
-        this.id = Date.now() + Math.random(); // Simple unique ID
-        this.title = title;
-        this.description = description;
-        this.color = color;
-        this.startDate = startDate;
-        this.status = status;
-        this.budget = parseFloat(budget) || 0;
-        this.createdAt = new Date().toISOString();
-    }
-}
-
 // Form validation functions
 function validateTitle(title) {
     if (!title || title.trim().length === 0) {
@@ -35,9 +17,11 @@ function validateTitle(title) {
 }
 
 function validateDescription(description) {
+    // Description is now optional - if empty, return null (no error)
     if (!description || description.trim().length === 0) {
-        return "Description is required";
+        return null;
     }
+    // If description is provided, it still needs to meet minimum requirements
     if (description.trim().length < 10) {
         return "Description must be at least 10 characters";
     }
@@ -146,6 +130,106 @@ function validateForm() {
     return isValid;
 }
 
+// Load all tasks from server
+function loadTasks() {
+    console.log("Loading tasks from server...");
+    $.ajax({
+        type: "GET",
+        url: API,
+        success: function(response) {
+            console.log("Tasks loaded successfully:", response);
+            // Convert server response to Task objects
+            tasks = response.map(taskData => {
+                const task = new Task(
+                    taskData.title,
+                    taskData.description,
+                    taskData.color,
+                    taskData.startDate,
+                    taskData.status,
+                    taskData.budget
+                );
+                // Preserve server ID if it exists
+                if (taskData.id) {
+                    task.id = taskData.id;
+                }
+                if (taskData._id) {
+                    task._id = taskData._id;
+                }
+                return task;
+            });
+            displayTasks();
+            showSuccessMessage(`${tasks.length} tasks loaded from server`);
+        },
+        error: function(xhr, status, error) {
+            console.error("Error loading tasks:", error);
+            showErrorMessage("Failed to load tasks from server. Working in offline mode.");
+            // Continue with empty array if server is unreachable
+            tasks = [];
+            displayTasks();
+        }
+    });
+}
+
+// Save task to server
+function saveTaskToServer(task, callback) {
+    console.log("Saving task to server:", task);
+    $.ajax({
+        type: "POST",
+        url: API,
+        data: JSON.stringify(task),
+        contentType: "application/json",
+        success: function(response) {
+            console.log("Task saved successfully:", response);
+            // Update task with server response (may include server-generated ID)
+            if (response.id) task.id = response.id;
+            if (response._id) task._id = response._id;
+            callback(true, response);
+        },
+        error: function(xhr, status, error) {
+            console.error("Error saving task:", error);
+            callback(false, error);
+        }
+    });
+}
+
+// Update task on server
+function updateTaskOnServer(task, callback) {
+    console.log("Updating task on server:", task);
+    const taskId = task._id || task.id;
+    $.ajax({
+        type: "PUT",
+        url: `${API}/${taskId}`,
+        data: JSON.stringify(task),
+        contentType: "application/json",
+        success: function(response) {
+            console.log("Task updated successfully:", response);
+            callback(true, response);
+        },
+        error: function(xhr, status, error) {
+            console.error("Error updating task:", error);
+            callback(false, error);
+        }
+    });
+}
+
+// Delete task from server
+function deleteTaskFromServer(task, callback) {
+    console.log("Deleting task from server:", task);
+    const taskId = task._id || task.id;
+    $.ajax({
+        type: "DELETE",
+        url: `${API}/${taskId}`,
+        success: function(response) {
+            console.log("Task deleted successfully:", response);
+            callback(true, response);
+        },
+        error: function(xhr, status, error) {
+            console.error("Error deleting task:", error);
+            callback(false, error);
+        }
+    });
+}
+
 // Save or update task
 function saveTask() {
     if (!validateForm()) {
@@ -163,9 +247,19 @@ function saveTask() {
     if (currentEditIndex === -1) {
         // Create new task
         const newTask = new Task(title, description, color, startDate, status, budget || 0);
-        tasks.push(newTask);
-        console.log("New task created:", newTask);
-        showSuccessMessage("Task created successfully!");
+        
+        // Save to server
+        saveTaskToServer(newTask, function(success, response) {
+            if (success) {
+                tasks.push(newTask);
+                console.log("New task created:", newTask);
+                showSuccessMessage("Task created and saved to server!");
+                displayTasks();
+                clearForm();
+            } else {
+                showErrorMessage("Failed to save task to server. Please try again.");
+            }
+        });
     } else {
         // Update existing task
         const existingTask = tasks[currentEditIndex];
@@ -175,15 +269,21 @@ function saveTask() {
         existingTask.startDate = startDate;
         existingTask.status = status;
         existingTask.budget = budget ? parseFloat(budget) : 0;
-        console.log("Task updated:", existingTask);
-        showSuccessMessage("Task updated successfully!");
-        currentEditIndex = -1;
-        $("#btnSave").text("Save Task");
+        
+        // Update on server
+        updateTaskOnServer(existingTask, function(success, response) {
+            if (success) {
+                console.log("Task updated:", existingTask);
+                showSuccessMessage("Task updated on server!");
+                currentEditIndex = -1;
+                $("#btnSave").text("Save Task");
+                displayTasks();
+                clearForm();
+            } else {
+                showErrorMessage("Failed to update task on server. Please try again.");
+            }
+        });
     }
-    
-    // Refresh display and clear form
-    displayTasks();
-    clearForm();
 }
 
 // Display tasks in the list section - NO INLINE STYLES
@@ -218,7 +318,7 @@ function displayTasks() {
                     <h4 class="task-title">${task.title}</h4>
                     <span class="task-status status-${task.status.toLowerCase().replace(' ', '-')}">${task.status}</span>
                 </div>
-                <p class="task-description">${task.description}</p>
+                ${task.description ? `<p class="task-description">${task.description}</p>` : ''}
                 <div class="task-details">
                     <div class="task-detail">
                         <strong>Start:</strong> ${formattedDate}
@@ -268,17 +368,29 @@ function editTask(index) {
 // Delete task
 function deleteTask(index) {
     if (confirm("Are you sure you want to delete this task?")) {
-        const deletedTask = tasks.splice(index, 1)[0];
-        console.log("Task deleted:", deletedTask);
-        displayTasks();
-        showSuccessMessage("Task deleted successfully!");
+        const taskToDelete = tasks[index];
         
-        // Reset edit mode if we were editing the deleted task
-        if (currentEditIndex === index) {
-            currentEditIndex = -1;
-            $("#btnSave").text("Save Task");
-            clearForm();
-        }
+        // Delete from server
+        deleteTaskFromServer(taskToDelete, function(success, response) {
+            if (success) {
+                const deletedTask = tasks.splice(index, 1)[0];
+                console.log("Task deleted:", deletedTask);
+                displayTasks();
+                showSuccessMessage("Task deleted from server!");
+                
+                // Reset edit mode if we were editing the deleted task
+                if (currentEditIndex === index) {
+                    currentEditIndex = -1;
+                    $("#btnSave").text("Save Task");
+                    clearForm();
+                } else if (currentEditIndex > index) {
+                    // Adjust edit index if we deleted a task before the one being edited
+                    currentEditIndex--;
+                }
+            } else {
+                showErrorMessage("Failed to delete task from server. Please try again.");
+            }
+        });
     }
 }
 
@@ -298,7 +410,7 @@ function clearForm() {
 // Show success message
 function showSuccessMessage(message) {
     // Remove existing messages
-    $(".success-message").remove();
+    $(".success-message, .error-message").remove();
     
     // Add success message
     const successDiv = `<div class="success-message">${message}</div>`;
@@ -312,12 +424,29 @@ function showSuccessMessage(message) {
     }, 3000);
 }
 
+// Show error message
+function showErrorMessage(message) {
+    // Remove existing messages
+    $(".success-message, .error-message").remove();
+    
+    // Add error message
+    const errorDiv = `<div class="error-message-main">${message}</div>`;
+    $("#form").prepend(errorDiv);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        $(".error-message-main").fadeOut(500, function() {
+            $(this).remove();
+        });
+    }, 5000);
+}
+
 // Initialize application
 function init() {
     console.log("Task Manager initialized");
     
     // Set default color
-    $("#inputColor").val("#563d7c");
+    $("#inputColor").val("#3d3f7cff");
     
     // Hook up event listeners
     $("#btnSave").click(saveTask);
@@ -325,6 +454,13 @@ function init() {
     // Add clear button
     $("#btnSave").after('<button class="btn btn-secondary" type="button" id="btnClear" style="margin-left: 10px;">Clear Form</button>');
     $("#btnClear").click(clearForm);
+    
+    // Add refresh button to reload tasks from server
+    $("#btnClear").after('<button class="btn btn-info" type="button" id="btnRefresh" style="margin-left: 10px;">Refresh Tasks</button>');
+    $("#btnRefresh").click(function() {
+        loadTasks();
+        showSuccessMessage("Refreshing tasks from server...");
+    });
     
     // Real-time validation on blur
     $("#inputTitle").blur(() => {
@@ -345,8 +481,8 @@ function init() {
         }
     });
     
-    // Display initial empty state
-    displayTasks();
+    // Load tasks from server when page loads
+    loadTasks();
 }
 
 // Initialize when page loads
