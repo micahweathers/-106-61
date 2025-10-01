@@ -3,6 +3,7 @@ const API="https://106api-b0bnggbsgnezbzcz.westus3-01.azurewebsites.net/api/task
 // Task constructor
 class Task {
     constructor(title, description, color, startDate, status, budget) {
+        this.userId = "micah-ch61";
         this.id = Date.now() + Math.random();
         this.title = title;
         this.description = description;
